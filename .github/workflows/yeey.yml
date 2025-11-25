@@ -1,0 +1,81 @@
+name: Pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+    - cron: "*/5 * * * *"
+
+jobs:
+  task-runner:
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform: [ubuntu-latest]
+        py: ["3.13"]
+      fail-fast: false
+      max-parallel: 1
+    env:
+      PY_COLORS: "1"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure Python ${{ matrix.py }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+
+      - name: Locale preparation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tzdata locales
+          sudo locale-gen en_US.UTF-8
+          sudo localectl set-locale LANG=en_US.UTF-8
+          export LANG=en_US.UTF-8
+          sudo update-locale
+          locale -a && locale && locale -c -k LC_NUMERIC
+          localectl status
+
+      - name: Dependency installation
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade wheel seleniumbase pyautogui pymongo python-xlib
+
+      - name: Chrome setup (conditional)
+        if: matrix.platform == 'ubuntu-20.04'
+        run: sudo apt install -y google-chrome-stable
+
+      - name: Verify CLI aliases
+        run: |
+          seleniumbase
+          sbase
+
+      - name: Driver setup
+        run: seleniumbase install chromedriver
+
+      - name: Cloudflare WARP client
+        run: |
+          sudo apt update
+          sudo apt install -y curl
+          curl https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt update
+          sudo apt install -y cloudflare-warp
+          sudo warp-cli --accept-tos registration new
+          sudo warp-cli --accept-tos connect
+          sleep 5
+          sudo warp-cli --accept-tos status
+
+      - name: Execute script
+        run: python vasa.py --debug --chrome --xvfb --screenshot
+
+      - name: Archive screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ./latest_logs/
